@@ -278,13 +278,17 @@ public class LocalFilesystem extends Filesystem {
         JSONObject metadata = new JSONObject();
         try {
             // Ensure that directories report a size of 0
-        	metadata.put("size", file.isDirectory() ? 0 : file.length());
-        	metadata.put("type", FileHelper.getMimeType(file.getAbsolutePath(), cordova));
-        	metadata.put("name", file.getName());
-        	metadata.put("fullPath", inputURL.fullPath);
-        	metadata.put("lastModifiedDate", file.lastModified());
+            // TODO modified by wzq
+            metadata.put("size", getFileSize(file));
+            // metadata.put("size", file.isDirectory() ? 0 : file.length());
+            metadata.put("type", FileHelper.getMimeType(file.getAbsolutePath(), cordova));
+            metadata.put("name", file.getName());
+            metadata.put("fullPath", inputURL.fullPath);
+            metadata.put("lastModifiedDate", file.lastModified());
         } catch (JSONException e) {
-        	return null;
+            return null;
+        }catch(IOException e){
+            e.printStackTrace();
         }
         return metadata;
 	}
@@ -293,8 +297,8 @@ public class LocalFilesystem extends Filesystem {
      * Check to see if the user attempted to copy an entry into its parent without changing its name,
      * or attempted to copy a directory into a directory that it contains directly or indirectly.
      *
-     * @param srcDir
-     * @param destinationDir
+     * @param src srcDir
+     * @param dest destinationDir
      * @return
      */
     private boolean isCopyOnItself(String src, String dest) {
@@ -536,23 +540,27 @@ public class LocalFilesystem extends Filesystem {
         if (end < 0) {
             end = file.length();
         }
-        long numBytesToRead = end - start;
+//        long numBytesToRead = end - start;
+//        InputStream rawInputStream = new FileInputStream(file);
+//		try {
+//			if (start > 0) {
+//                rawInputStream.skip(start);
+//			}
+//            LimitedInputStream inputStream = new LimitedInputStream(rawInputStream, numBytesToRead);
+//            readFileCallback.handleData(inputStream, contentType);
+//		} finally {
+//            rawInputStream.close();
+//		}
+        InputStream inputStream = getDecryptStream(file);
+        byte[] bytes = IOUtils.subStream(inputStream, start, end);
+        inputStream.close();
+        InputStream stream = IOUtils.bytes2Stream(bytes);
+        readFileCallback.handleData(stream, contentType);
+    }
 
-        InputStream rawInputStream = new FileInputStream(file);
-		try {
-			if (start > 0) {
-                rawInputStream.skip(start);
-			}
-            LimitedInputStream inputStream = new LimitedInputStream(rawInputStream, numBytesToRead);
-            readFileCallback.handleData(inputStream, contentType);
-		} finally {
-            rawInputStream.close();
-		}
-	}
-    
-	@Override
-	public long writeToFileAtURL(LocalFilesystemURL inputURL, String data,
-			int offset, boolean isBinary) throws IOException, NoModificationAllowedException {
+    @Override
+    public long writeToFileAtURL(LocalFilesystemURL inputURL, String data,
+                                 int offset, boolean isBinary) throws IOException, NoModificationAllowedException {
 
         boolean append = false;
         if (offset > 0) {
@@ -567,25 +575,40 @@ public class LocalFilesystem extends Filesystem {
             rawData = data.getBytes();
         }
         ByteArrayInputStream in = new ByteArrayInputStream(rawData);
-        try
-        {
-        	byte buff[] = new byte[rawData.length];
-            FileOutputStream out = new FileOutputStream(this.filesystemPathForURL(inputURL), append);
-            try {
-            	in.read(buff, 0, buff.length);
-            	out.write(buff, 0, rawData.length);
-            	out.flush();
-            } finally {
-            	// Always close the output
-            	out.close();
-            }
-        }
-        catch (NullPointerException e)
-        {
-            // This is a bug in the Android implementation of the Java Stack
-            NoModificationAllowedException realException = new NoModificationAllowedException(inputURL.toString());
-            throw realException;
-        }
+        // TODO modified by wzq read the file
+        File file = new File(filesystemPathForURL(inputURL));
+        InputStream origin = getDecryptStream(file);
+        InputStream stream = IOUtils.combine(origin, rawData);
+        origin.close();
+
+        byte[] from = IOUtils.stream2Bytes(stream);
+        byte[] to = AesTool.getInstance().encryptBytes(from);
+        FileOutputStream out = new FileOutputStream(file);
+        out.write(to);
+        out.flush();
+        out.close();
+        origin.close();
+        stream.close();
+        // origin code is
+//        try
+//        {
+//        	byte buff[] = new byte[rawData.length];
+//            FileOutputStream out = new FileOutputStream(this.filesystemPathForURL(inputURL), append);
+//            try {
+//            	in.read(buff, 0, buff.length);
+//            	out.write(buff, 0, rawData.length);
+//            	out.flush();
+//            } finally {
+//            	// Always close the output
+//            	out.close();
+//            }
+//        }
+//        catch (NullPointerException e)
+//        {
+//            // This is a bug in the Android implementation of the Java Stack
+//            NoModificationAllowedException realException = new NoModificationAllowedException(inputURL.toString());
+//            throw realException;
+//        }
 
         return rawData.length;
 	}
@@ -597,21 +620,34 @@ public class LocalFilesystem extends Filesystem {
         if (!file.exists()) {
             throw new FileNotFoundException("File at " + inputURL.URL + " does not exist.");
         }
-        
-        RandomAccessFile raf = new RandomAccessFile(filesystemPathForURL(inputURL), "rw");
-        try {
-            if (raf.length() >= size) {
-                FileChannel channel = raf.getChannel();
-                channel.truncate(size);
-                return size;
-            }
+        // origin code
+//        RandomAccessFile raf = new RandomAccessFile(filesystemPathForURL(inputURL), "rw");
+//        try {
+//            if (raf.length() >= size) {
+//                FileChannel channel = raf.getChannel();
+//                channel.truncate(size);
+//                return size;
+//            }
+//
+//            return raf.length();
+//        } finally {
+//            raf.close();
+//        }
 
-            return raf.length();
-        } finally {
-            raf.close();
+        // TODO modified by wzq
+        long fileSize = getFileSize(file);
+        if (fileSize > size) {
+            InputStream stream = getDecryptStream(file);
+            byte[] bytes2 = IOUtils.subStream(stream, 0, size);
+            stream.close();
+            FileOutputStream fos = new FileOutputStream(file);
+            fos.write(bytes2);
+            fos.flush();
+            fos.close();
+            return size;
+        } else {
+            return fileSize;
         }
-
-
 	}
 
 	@Override
@@ -629,4 +665,71 @@ public class LocalFilesystem extends Filesystem {
 		return os;
 	}
 
+    /**
+     * get the InputStream of the file : if encrypted , the stream is the de-crypt stream
+     *
+     * @param file target file
+     * @return InputStream represent the not-encrypted file
+     * @throws FileNotFoundException
+     */
+    private InputStream getDecryptStream(File file) throws IOException {
+        if (!isEncrypt) {
+            return new FileInputStream(file);
+        }
+
+        InputStream stream1 = new FileInputStream(file);
+        if (stream1 == null || stream1.available() == 0) {
+            return stream1;
+        }
+
+        InputStream deStream = AesTool.getInstance().decryptStream(stream1);
+        try {
+            stream1.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return deStream;
+    }
+
+    /**
+     * get the file size, if file encrypted, get the respond decrypted content file length
+     *
+     * @param file the file
+     * @return file length
+     * @throws FileNotFoundException
+     */
+    private long getFileSize(File file) throws IOException {
+        if (file.isDirectory()) {
+            return 0;
+        }
+        if (!isEncrypt) {
+            return file.length();
+        }
+
+        long fileSize = 0;
+        InputStream stream = getDecryptStream(file);
+        try {
+            fileSize = stream.available();
+            stream.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return fileSize;
+    }
+
+    // check if file is encrypted
+//    private boolean isEncrypt(File file) throws FileNotFoundException {
+//        InputStream stream1 = new FileInputStream(file);
+//        InputStream deStream = AesTool.getInstance().decryptStream(stream1);
+//        boolean result = (deStream != null);
+//        try{
+//            stream1.close();
+//            if(result){
+//                deStream.close();
+//            }
+//        }catch(IOException e){
+//            e.printStackTrace();
+//        }
+//        return result;
+//    }
 }

@@ -31,6 +31,7 @@ import org.json.JSONObject;
 
 public abstract class Filesystem {
 
+    protected final boolean isEncrypt = true;
 	public String name;
 	
 	public interface ReadFileCallback {

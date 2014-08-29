@@ -18,10 +18,7 @@
  */
 package org.apache.cordova.file;
 
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.io.OutputStream;
+import java.io.*;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -169,7 +166,11 @@ public class ContentFilesystem extends Filesystem {
         Cursor cursor = openCursorForURL(inputURL);
         try {
         	if (cursor != null && cursor.moveToFirst()) {
-        		size = resourceSizeForCursor(cursor);
+                if(!isEncrypt){
+        		    size = resourceSizeForCursor(cursor);
+                }else{
+                    size = getFileSize(inputURL); //TODO modified by wzq
+                }
         		lastModified = lastModifiedDateForCursor(cursor);
         	} else {
     			throw new FileNotFoundException();
@@ -236,6 +237,11 @@ public class ContentFilesystem extends Filesystem {
                 ofrr.inputStream.skip(start);
 			}
             LimitedInputStream inputStream = new LimitedInputStream(ofrr.inputStream, numBytesToRead);
+            if(isEncrypt){
+                InputStream stream = AesTool.getInstance().decryptStream(inputStream);
+                readFileCallback.handleData(stream,ofrr.mimeType);
+                return;
+            }
             readFileCallback.handleData(inputStream, ofrr.mimeType);
 		} finally {
             ofrr.inputStream.close();
@@ -323,5 +329,33 @@ public class ContentFilesystem extends Filesystem {
 			throws IOException {
 		OutputStream os = resourceApi.openOutputStream(inputURL.URL);
 		return os;
+    }
+
+    private InputStream getDecryptStream(LocalFilesystemURL inputURL) throws FileNotFoundException{
+        CordovaResourceApi.OpenForReadResult ofrr = null;
+        try {
+            ofrr = resourceApi.openForRead(inputURL.URL);
+        } catch (IOException e) {
+            e.printStackTrace();
+            throw  new FileNotFoundException(" at inputURL= " + inputURL.URL);
+        }
+        if(isEncrypt){
+            InputStream stream = AesTool.getInstance().decryptStream(ofrr.inputStream);
+            return stream;
+        }else{
+            return ofrr.inputStream;
+        }
+    }
+
+    private int getFileSize(LocalFilesystemURL inputURL) throws FileNotFoundException {
+        InputStream is = getDecryptStream(inputURL);
+        try {
+            int len = is.available();
+            is.close();
+            return len;
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return 0;
     }
 }
